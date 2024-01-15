@@ -1,5 +1,7 @@
+use crate::Position;
+
 use crossterm::{
-    cursor::MoveTo,
+    cursor::{Hide, MoveTo},
     event::{KeyCode, KeyEvent, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, size, Clear, ClearType},
@@ -37,10 +39,25 @@ impl Terminal {
         execute!(std::io::stdout(), Clear(ClearType::All)).unwrap();
     }
 
-    pub fn cursor_position(x: u16, y: u16) {
-        // let x = x.saturating_add(1);
-        // let y = y.saturating_add(1);
-        execute!(std::io::stdout(), MoveTo(x, y)).unwrap();
+    pub fn clear_current_line() {
+        execute!(std::io::stdout(), Clear(ClearType::CurrentLine)).unwrap();
+    }
+
+    #[allow(clippy::cast_possible_truncation)]
+    pub fn cursor_position(position: &Position) {
+        execute!(
+            std::io::stdout(),
+            MoveTo(position.x as u16, position.y as u16)
+        )
+        .unwrap();
+    }
+
+    pub fn cursor_hide() {
+        crossterm::execute!(std::io::stdout(), Hide).unwrap();
+    }
+
+    pub fn cursor_show() {
+        crossterm::execute!(std::io::stdout(), crossterm::cursor::Show).unwrap();
     }
 
     pub fn flush() -> Result<(), std::io::Error> {
