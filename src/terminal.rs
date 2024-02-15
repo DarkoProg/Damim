@@ -4,6 +4,7 @@ use crossterm::{
     cursor::{Hide, MoveTo},
     event::{KeyCode, KeyEvent, KeyModifiers},
     execute,
+    style::{Color, ResetColor, SetBackgroundColor, SetForegroundColor},
     terminal::{disable_raw_mode, enable_raw_mode, size, Clear, ClearType},
 };
 use std::fmt;
@@ -26,7 +27,7 @@ impl Terminal {
         Ok(Self {
             size: Size {
                 width: size.0,
-                height: size.1,
+                height: size.1.saturating_sub(2),
             },
         })
     }
@@ -41,6 +42,30 @@ impl Terminal {
 
     pub fn clear_current_line() {
         execute!(std::io::stdout(), Clear(ClearType::CurrentLine)).unwrap();
+    }
+
+    pub fn set_bg_color(color: Color) {
+        crossterm::execute!(
+            std::io::stdout(),
+            crossterm::style::SetBackgroundColor(color)
+        )
+        .unwrap();
+    }
+
+    pub fn reset_bg_color() {
+        crossterm::execute!(std::io::stdout(), ResetColor).unwrap();
+    }
+
+    pub fn set_fg_color(color: Color) {
+        crossterm::execute!(
+            std::io::stdout(),
+            crossterm::style::SetBackgroundColor(color)
+        )
+        .unwrap();
+    }
+
+    pub fn reset_fg_color() {
+        crossterm::execute!(std::io::stdout(), ResetColor).unwrap();
     }
 
     #[allow(clippy::cast_possible_truncation)]

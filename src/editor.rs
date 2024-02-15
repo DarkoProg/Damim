@@ -2,14 +2,43 @@ use crate::Document;
 use crate::Row;
 use crate::Terminal;
 
+use crossterm::event::KeyEventKind;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use std::{env, fmt};
+use crossterm::style::{Color, SetBackgroundColor, SetForegroundColor};
+use std::{
+    env, fmt,
+    time::{Duration, Instant},
+};
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+const STATUS_BG_COLOR: Color = Color::Rgb {
+    r: (239),
+    g: (239),
+    b: (239),
+};
+const STATUS_FG_COLOR: Color = Color::Rgb {
+    r: (63),
+    g: (63),
+    b: (63),
+};
 
 #[derive(Default)]
 pub struct Position {
     pub x: usize,
     pub y: usize,
+}
+
+struct StatusMessage {
+    text: String,
+    time: Instant,
+}
+
+impl StatusMessage {
+    fn from(message: String) -> Self {
+        Self {
+            time: Instant::now(),
+            text: message,
+        }
+    }
 }
 
 pub struct Editor {
@@ -18,14 +47,22 @@ pub struct Editor {
     cursor_position: Position,
     offset: Position,
     document: Document,
+    status_message: StatusMessage,
 }
 
 impl Editor {
     pub fn default() -> Self {
         let args: Vec<String> = env::args().collect();
+        let mut initial_status = String::from("HRLP: Ctrl-q = quit");
         let document = if args.len() > 1 {
             let file_name = &args[1];
-            Document::open(file_name).unwrap_or_default()
+            let doc = Document::open(file_name);
+            if doc.is_ok() {
+                doc.unwrap()
+            } else {
+                initial_status = format!("ERROR: Could not open file: {}", file_name);
+                Document::default()
+            }
         } else {
             Document::default()
         };
@@ -35,6 +72,7 @@ impl Editor {
             cursor_position: Position::default(),
             offset: Position::default(),
             document,
+            status_message: StatusMessage::from(initial_status),
         }
     }
 
@@ -60,6 +98,8 @@ impl Editor {
             println!("Sadge!");
         } else {
             self.draw_rows();
+            self.draw_status_bar();
+            self.draw_message_bar();
             Terminal::cursor_position(&Position {
                 x: self.cursor_position.x.saturating_sub(self.offset.x),
                 y: self.cursor_position.y.saturating_sub(self.offset.y),
@@ -75,9 +115,35 @@ impl Editor {
             KeyEvent {
                 code: KeyCode::Char('q'),
                 modifiers: KeyModifiers::CONTROL,
-                kind: _,
+                kind: KeyEventKind::Press,
                 state: _,
             } => self.should_quit = true,
+            KeyEvent {
+                code: KeyCode::Char(c),
+                modifiers: _,
+                kind: KeyEventKind::Press,
+                state: _,
+            } => {
+                self.document.insert(&self.cursor_position, c);
+                self.move_cursor(KeyCode::Right);
+            }
+            KeyEvent {
+                code: KeyCode::Delete,
+                modifiers: _,
+                kind: KeyEventKind::Press,
+                state: _,
+            } => {
+                self.document.delete(&self.cursor_position);
+            }
+            KeyEvent {
+                code: KeyCode::Backspace,
+                modifiers: _,
+                kind: KeyEventKind::Press,
+                state: _,
+            } => {
+                self.move_cursor(KeyCode::Left);
+                self.document.delete(&self.cursor_position);
+            }
             KeyEvent {
                 code:
                     KeyCode::Up
@@ -89,10 +155,10 @@ impl Editor {
                     | KeyCode::End
                     | KeyCode::Home,
                 modifiers: _,
-                kind: _,
+                kind: KeyEventKind::Press,
                 state: _,
             } => self.move_cursor(pressed_key.code),
-            _ => println!("{:?}", pressed_key.code),
+            _ => (),
         }
         self.scroll();
         Ok(())
@@ -116,8 +182,9 @@ impl Editor {
     }
 
     fn move_cursor(&mut self, key: KeyCode) {
+        let terminal_height = self.terminal.size().height as usize;
         let Position { mut x, mut y } = self.cursor_position;
-        let height = self.document.len();
+        let height = self.document.len() - 1;
         let mut width = if let Some(row) = self.document.row(y) {
             row.len()
         } else {
@@ -130,14 +197,43 @@ impl Editor {
                     y = y.saturating_add(1);
                 }
             }
-            KeyCode::Left => x = x.saturating_sub(1),
-            KeyCode::Right => {
-                if x < width {
-                    x = x.saturating_add(1);
+            KeyCode::Left => {
+                if x > 0 {
+                    x -= 1;
+                } else if y > 0 {
+                    y -= 1;
+                    if let Some(row) = self.document.row(y) {
+                        x = row.len();
+                    } else {
+                        x = 0;
+                    }
                 }
             }
-            KeyCode::PageUp => y = 0,
-            KeyCode::PageDown => y = height,
+            KeyCode::Right => {
+                if x < width {
+                    x += 1;
+                } else if y < height {
+                    y += 1;
+                    x = 0;
+                }
+                // if x < width {
+                //     x = x.saturating_add(1);
+                // }
+            }
+            KeyCode::PageUp => {
+                y = if y > terminal_height {
+                    y - terminal_height
+                } else {
+                    0
+                }
+            }
+            KeyCode::PageDown => {
+                y = if y.saturating_add(terminal_height) < height {
+                    y + terminal_height as usize
+                } else {
+                    height
+                }
+            }
             KeyCode::Home => x = 0,
             KeyCode::End => x = width,
             _ => (),
@@ -154,7 +250,7 @@ impl Editor {
     }
 
     fn draw_rows(&self) {
-        let height = self.terminal.size().height - 1;
+        let height = self.terminal.size().height;
         for terminal_row in 0..height {
             if let Some(row) = self.document.row(terminal_row as usize + self.offset.y) {
                 self.draw_row(row);
@@ -183,6 +279,45 @@ impl Editor {
         welcome_message = format!("~{}{}", spaces, welcome_message);
         welcome_message.truncate(width);
         println!("{}\r", welcome_message);
+    }
+
+    fn draw_status_bar(&self) {
+        let mut status;
+        let width = self.terminal.size().width as usize;
+        let mut file_name = "[No Name]".to_string();
+        if let Some(name) = &self.document.file_name {
+            file_name = name.clone();
+            file_name.truncate(20);
+        }
+        status = format!("{} - {} lines", file_name, self.document.len());
+
+        let line_indicator = format!(
+            "{}/{}",
+            self.cursor_position.y.saturating_add(1),
+            self.document.len()
+        );
+        let len = status.len() + line_indicator.len();
+
+        if width > len {
+            status.push_str(&" ".repeat(width - len));
+        }
+        status = format!("{}{}", status, line_indicator);
+        status.truncate(width);
+        Terminal::set_bg_color(STATUS_BG_COLOR);
+        Terminal::set_fg_color(STATUS_FG_COLOR);
+        println!("{}\r", status);
+        Terminal::reset_fg_color();
+        Terminal::reset_bg_color();
+    }
+
+    fn draw_message_bar(&self) {
+        Terminal::clear_current_line();
+        let message = &self.status_message;
+        if Instant::now() - message.time < Duration::new(5, 0) {
+            let mut text = message.text.clone();
+            text.truncate(self.terminal.size().width as usize);
+            print!("{}", text);
+        }
     }
 }
 
